@@ -3,103 +3,32 @@
 """
 🇸🇬 新加坡文化交流系统 - Streamlit 版本
 
-运行方式：
-    streamlit run singapore_culture_exchange_streamlit.py
+适用于 Streamlit Cloud 部署
 
-依赖安装：
-    pip install streamlit anthropic python-dotenv
+本地运行：
+    streamlit run singapore_streamlit.py
+
+云端部署：
+    1. 上传到 GitHub
+    2. 在 Streamlit Cloud 导入仓库
+    3. 设置环境变量 ANTHROPIC_API_KEY
 """
 
 import os
-import json
-import uuid
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional
-
 import streamlit as st
 from anthropic import Anthropic
-from dotenv import load_dotenv
+from datetime import datetime
 
+# ============= 页面配置 =============
+st.set_page_config(
+    page_title="新加坡文化交流系统",
+    page_icon="🇸🇬",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
-# ============= 配置管理 =============
-class Settings:
-    """应用配置"""
-    def __init__(self):
-        load_dotenv()
-        self.app_title = "新加坡文化交流系统"
-        self.app_version = "1.0.0"
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        self.data_dir = "data"
-        self.conversations_dir = "data/conversations"
-        self.claude_model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-        self.claude_max_tokens = int(os.getenv("CLAUDE_MAX_TOKENS", "2000"))
-        self.claude_temperature = float(os.getenv("CLAUDE_TEMPERATURE", "0.8"))
-
-
-# ============= 存储服务 =============
-class StorageService:
-    """文件存储服务"""
-
-    def __init__(self, conversations_dir: str):
-        self.conversations_dir = Path(conversations_dir)
-        self.conversations_dir.mkdir(parents=True, exist_ok=True)
-
-    def create_conversation(self) -> str:
-        """创建新对话，返回对话ID"""
-        conversation_id = str(uuid.uuid4())
-        conversation_file = self.conversations_dir / f"{conversation_id}.json"
-
-        conversation_data = {
-            "id": conversation_id,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "messages": []
-        }
-
-        with open(conversation_file, 'w', encoding='utf-8') as f:
-            json.dump(conversation_data, f, ensure_ascii=False, indent=2)
-
-        return conversation_id
-
-    def add_message(self, conversation_id: str, role: str, content: str) -> None:
-        """添加消息到对话"""
-        conversation_file = self.conversations_dir / f"{conversation_id}.json"
-
-        if not conversation_file.exists():
-            raise ValueError(f"Conversation {conversation_id} not found")
-
-        with open(conversation_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        message = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        data["messages"].append(message)
-        data["updated_at"] = datetime.now().isoformat()
-
-        with open(conversation_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    def get_conversation(self, conversation_id: str) -> Optional[Dict]:
-        """获取对话历史"""
-        conversation_file = self.conversations_dir / f"{conversation_id}.json"
-
-        if not conversation_file.exists():
-            return None
-
-        with open(conversation_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-
-
-# ============= Claude 服务 =============
-class ClaudeService:
-    """Claude API服务"""
-
-    SYSTEM_PROMPT = """你是一个专业且亲切的新加坡文化交流系统，专注为用户提供全面、准确、易懂的新加坡文化相关问答服务，打造沉浸式的新加坡文化交流体验。
+# ============= 系统提示词 =============
+SYSTEM_PROMPT = """你是一个专业且亲切的新加坡文化交流系统，专注为用户提供全面、准确、易懂的新加坡文化相关问答服务，打造沉浸式的新加坡文化交流体验。
 
 ## 核心定位与职责
 
@@ -114,7 +43,6 @@ class ClaudeService:
    - 语言**口语化、友好自然**，不生硬刻板，适合日常交流
    - 回答结构清晰，重点突出，可适当补充趣味冷知识
    - 遇到敏感话题保持中立客观，倡导多元包容
-   - 若用户问题超出文化范畴（如法律、移民政策、金融等），礼貌说明并引导聚焦文化相关内容
 
 3. **交互风格**
    - 主动引导对话，可根据用户兴趣延伸相关文化话题
@@ -124,120 +52,288 @@ class ClaudeService:
 
 请以新加坡文化为核心，随时响应用户的提问，开展自然流畅的文化交流。"""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6",
-                 max_tokens: int = 2000, temperature: float = 0.8):
-        self.client = Anthropic(api_key=api_key)
-        self.model = model
-        self.max_tokens = max_tokens
-        self.temperature = temperature
 
-    def chat(self, message: str, conversation_history: List[Dict] = None) -> str:
-        """与Claude对话"""
-        messages = conversation_history.copy() if conversation_history else []
-        messages.append({"role": "user", "content": message})
-
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            system=self.SYSTEM_PROMPT,
-            messages=messages
-        )
-
-        return response.content[0].text
+# ============= 初始化会话状态 =============
+@st.cache_resource
+def init_client(api_key: str):
+    """初始化 Anthropic 客户端（缓存）"""
+    return Anthropic(api_key=api_key)
 
 
-# ============= Streamlit 应用 =============
-def main():
-    # 页面配置
-    st.set_page_config(
-        page_title="新加坡文化交流系统",
-        page_icon="🇸🇬",
-        layout="centered"
-    )
-
-    # 初始化服务
-    settings = Settings()
-
-    # 检查 API Key
-    if not settings.anthropic_api_key:
-        st.error("⚠️ 未配置 ANTHROPIC_API_KEY")
-        st.info("请在 .env 文件中设置: ANTHROPIC_API_KEY=your_key_here")
-        st.info("获取 API Key: https://console.anthropic.com/")
-        return
-
-    # 初始化 session state
+def init_session_state():
+    """初始化会话状态"""
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    if "conversation_id" not in st.session_state:
-        storage = StorageService(settings.conversations_dir)
-        st.session_state.conversation_id = storage.create_conversation()
+    if "api_key_valid" not in st.session_state:
+        st.session_state.api_key_valid = None
 
-    # 显示标题
-    st.title("🇸🇬 新加坡文化交流系统")
-    st.markdown("探索新加坡多元文化，体验对话交流乐趣")
+    if "conversation_count" not in st.session_state:
+        st.session_state.conversation_count = 0
 
-    # 显示聊天历史
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
 
-    # 欢迎消息
-    if not st.session_state.messages:
+# ============= 侧边栏配置 =============
+def render_sidebar():
+    """渲染侧边栏"""
+    with st.sidebar:
+        st.image("https://img.icons8.com/color/96/singapore.png", width=80)
+        st.title("🇸🇬 设置")
+
+        st.markdown("---")
+
+        # API Key 输入
+        st.subheader("API 配置")
+        api_key_input = st.text_input(
+            "Anthropic API Key",
+            type="password",
+            placeholder="sk-ant-api03-...",
+            help="在 https://console.anthropic.com/ 获取"
+        )
+
+        st.markdown("---")
+
+        # 模型配置
+        st.subheader("模型设置")
+        model = st.selectbox(
+            "选择模型",
+            ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022"],
+            index=0,
+            help="推荐使用最新版本的 Claude Sonnet"
+        )
+
+        temperature = st.slider(
+            "创造性 (Temperature)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.8,
+            step=0.1,
+            help="越高越有创造性，越低越严谨"
+        )
+
+        max_tokens = st.slider(
+            "最大输出长度",
+            min_value=500,
+            max_value=4000,
+            value=2000,
+            step=500,
+            help="AI 回复的最大长度"
+        )
+
+        st.markdown("---")
+
+        # 统计信息
+        st.subheader("📊 对话统计")
+        if st.session_state.messages:
+            user_msgs = len([m for m in st.session_state.messages if m["role"] == "user"])
+            st.metric("用户消息", user_msgs)
+            st.metric("AI 回复", len(st.session_state.messages) - user_msgs)
+
+        st.markdown("---")
+
+        # 操作按钮
+        if st.button("🗑️ 清空对话", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
+
+        st.markdown("---")
+        st.markdown("### 💡 使用提示")
         st.markdown("""
-        ### 欢迎来到新加坡文化交流系统！
-
-        我可以帮您了解新加坡的历史文化、风土人情、饮食习俗等
-        请随时向我提问，让我们一起探索新加坡的多元文化魅力
+        - 在输入框提问即可开始对话
+        - 支持多轮对话和上下文理解
+        - 点击示例问题快速开始
+        - 侧边栏可调整模型参数
         """)
 
-        # 快捷问题按钮
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🎉 新加坡传统节日", use_container_width=True):
-                st.session_state.input = "新加坡有哪些传统节日？"
-        with col2:
-            if st.button("🍜 新加坡饮食文化", use_container_width=True):
-                st.session_state.input = "介绍一下新加坡的饮食文化"
+        return api_key_input, model, temperature, max_tokens
 
-        col3, col4 = st.columns(2)
-        with col3:
-            if st.button("🤝 新加坡社交礼仪", use_container_width=True):
-                st.session_state.input = "新加坡有什么社交礼仪需要注意？"
-        with col4:
-            if st.button("🗣️ 新加坡语言特点", use_container_width=True):
-                st.session_state.input = "新加坡的语言有什么特点？"
 
-    # 用户输入
+# ============= 主界面 =============
+def render_main_interface():
+    """渲染主界面"""
+    st.title("🇸🇬 新加坡文化交流系统")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666; margin-bottom: 20px;'>
+        探索新加坡多元文化，体验对话交流乐趣
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_example_questions():
+    """渲染示例问题"""
+    st.markdown("### 💡 试试这些问题")
+
+    examples = [
+        "新加坡有哪些传统节日？",
+        "介绍一下新加坡的饮食文化",
+        "新加坡有什么社交礼仪需要注意？",
+        "新加坡的语言有什么特点？",
+        "新加坡小贩中心是什么？",
+        "新加坡的住房文化是怎样的？"
+    ]
+
+    cols = st.columns(3)
+    for idx, example in enumerate(examples):
+        col = cols[idx % 3]
+        if col.button(example, key=f"example_{idx}", use_container_width=True):
+            st.session_state.example_question = example
+            st.rerun()
+
+
+def render_chat_history():
+    """渲染聊天历史"""
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"], avatar=message.get("avatar")):
+            st.markdown(message["content"])
+            if "timestamp" in message:
+                st.caption(f"🕐 {message['timestamp']}")
+
+
+def render_chat_input(client, model, temperature, max_tokens):
+    """渲染聊天输入并处理"""
+    # 检查是否有示例问题
+    if "example_question" in st.session_state:
+        prompt = st.session_state.example_question
+        del st.session_state.example_question
+        return prompt
+
+    # 正常输入
     if prompt := st.chat_input("输入您的问题..."):
-        # 显示用户消息
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        return prompt
+    return None
 
-        # 保存到文件
-        storage = StorageService(settings.conversations_dir)
-        storage.add_message(st.session_state.conversation_id, "user", prompt)
 
-        # 获取 AI 回复
-        with st.chat_message("assistant"):
-            with st.spinner("思考中..."):
-                claude_service = ClaudeService(
-                    api_key=settings.anthropic_api_key,
-                    model=settings.claude_model,
-                    max_tokens=settings.claude_max_tokens,
-                    temperature=settings.claude_temperature
+def add_user_message(prompt: str):
+    """添加用户消息"""
+    st.session_state.messages.append({
+        "role": "user",
+        "content": prompt,
+        "avatar": "👤",
+        "timestamp": datetime.now().strftime("%H:%M")
+    })
+
+
+def add_assistant_message(response: str):
+    """添加助手消息"""
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": response,
+        "avatar": "🤖",
+        "timestamp": datetime.now().strftime("%H:%M")
+    })
+
+
+def call_claude_api(client, prompt: str, model: str, temperature: float, max_tokens: int):
+    """调用 Claude API"""
+    # 准备消息历史（排除 avatar 和 timestamp）
+    messages_history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.messages[:-1]  # 排除刚添加的用户消息
+    ]
+
+    try:
+        with st.chat_message("assistant", avatar="🤖"):
+            with st.spinner("正在思考..."):
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=SYSTEM_PROMPT,
+                    messages=messages_history + [{"role": "user", "content": prompt}]
                 )
 
-                conversation_data = storage.get_conversation(st.session_state.conversation_id)
-                conversation_history = conversation_data["messages"][:-1]
+                ai_response = response.content[0].text
+                st.markdown(ai_response)
+                st.caption(f"🕐 {datetime.now().strftime('%H:%M')}")
 
-                response = claude_service.chat(prompt, conversation_history)
+        return ai_response
 
-        # 显示并保存 AI 回复
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        storage.add_message(st.session_state.conversation_id, "assistant", response)
+    except Exception as e:
+        error_msg = f"❌ API 调用失败: {str(e)}"
+
+        if "401" in str(e) or "403" in str(e):
+            error_msg = "❌ API Key 无效或无权限，请检查侧边栏的 API Key 配置"
+        elif "429" in str(e):
+            error_msg = "❌ API 请求过于频繁，请稍后再试"
+        elif "400" in str(e):
+            error_msg = f"❌ 请求参数错误: {str(e)}"
+
+        st.error(error_msg)
+        return None
+
+
+# ============= 主程序 =============
+def main():
+    """主程序"""
+    # 初始化会话状态
+    init_session_state()
+
+    # 渲染侧边栏
+    api_key, model, temperature, max_tokens = render_sidebar()
+
+    # 检查 API Key
+    if not api_key:
+        st.warning("⚠️ 请在侧边栏输入 Anthropic API Key")
+        st.info("""
+        💡 **获取 API Key**：
+        1. 访问 [Anthropic Console](https://console.anthropic.com/)
+        2. 登录账号
+        3. 进入 API Keys 页面
+        4. 创建新密钥
+        5. 复制密钥到左侧输入框
+        """)
+        return
+
+    # 初始化客户端
+    try:
+        client = init_client(api_key)
+
+        # 验证 API Key
+        if st.session_state.api_key_valid is None:
+            with st.spinner("验证 API Key..."):
+                test_response = client.messages.create(
+                    model=model,
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": "Hi"}]
+                )
+                st.session_state.api_key_valid = True
+                st.success("✅ API Key 验证成功！")
+                st.rerun()
+
+    except Exception as e:
+        st.session_state.api_key_valid = False
+        st.error(f"❌ API Key 验证失败: {str(e)}")
+        st.info("请检查 API Key 是否正确")
+        return
+
+    # 渲染主界面
+    render_main_interface()
+
+    # 如果没有消息，显示示例问题
+    if not st.session_state.messages:
+        render_example_questions()
+        st.markdown("---")
+
+    # 渲染聊天历史
+    render_chat_history()
+
+    # 渲染输入并处理
+    prompt = render_chat_input(client, model, temperature, max_tokens)
+
+    if prompt:
+        # 添加用户消息
+        add_user_message(prompt)
+        st.rerun()
+
+        # 调用 API
+        response = call_claude_api(client, prompt, model, temperature, max_tokens)
+
+        if response:
+            # 添加助手消息
+            add_assistant_message(response)
+            st.rerun()
 
 
 if __name__ == "__main__":
