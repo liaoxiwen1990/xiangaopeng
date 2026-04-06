@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🇸🇬 新加坡文化交流系统 - 单文件版本
-
-一个专业且亲切的新加坡文化交流Web应用，基于 FastAPI 和 Claude API 构建。
+🇸🇬 新加坡文化交流系统 - Streamlit 版本
 
 运行方式：
-    python3 singapore_culture_exchange.py
+    streamlit run singapore_culture_exchange_streamlit.py
 
 依赖安装：
-    pip install fastapi uvicorn anthropic python-dotenv jinja2 pydantic-settings
+    pip install streamlit anthropic python-dotenv
 """
 
 import os
@@ -19,46 +17,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict
-from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
+import streamlit as st
 from anthropic import Anthropic
-import sys
-import io
+from dotenv import load_dotenv
 
-# 修复 Windows 控制台编码问题
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ============= 配置管理 =============
-class Settings(BaseSettings):
+class Settings:
     """应用配置"""
-    model_config = ConfigDict(env_file=".env", case_sensitive=False)
-    app_title: str = "新加坡文化交流系统"
-    app_version: str = "1.0.0"
-    anthropic_api_key: str = ""
-    data_dir: str = "data"
-    conversations_dir: str = "data/conversations"
-    claude_model: str = "claude-sonnet-4-6"
-    claude_max_tokens: int = 2000
-    claude_temperature: float = 0.8
-
-
-def load_settings():
-    """加载配置"""
-    load_dotenv()
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("⚠️  警告: 未找到 ANTHROPIC_API_KEY 环境变量")
-        print("请在 .env 文件中设置: ANTHROPIC_API_KEY=your_key_here")
-    return Settings(
-        anthropic_api_key=api_key,
-        app_title=os.getenv("APP_TITLE", "新加坡文化交流系统"),
-        app_version=os.getenv("APP_VERSION", "1.0.0")
-    )
+    def __init__(self):
+        load_dotenv()
+        self.app_title = "新加坡文化交流系统"
+        self.app_version = "1.0.0"
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        self.data_dir = "data"
+        self.conversations_dir = "data/conversations"
+        self.claude_model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+        self.claude_max_tokens = int(os.getenv("CLAUDE_MAX_TOKENS", "2000"))
+        self.claude_temperature = float(os.getenv("CLAUDE_TEMPERATURE", "0.8"))
 
 
 # ============= 存储服务 =============
@@ -118,22 +94,6 @@ class StorageService:
         with open(conversation_file, 'r', encoding='utf-8') as f:
             return json.load(f)
 
-    def list_conversations(self, limit: int = 50) -> List[Dict]:
-        """列出最近的对话"""
-        conversations = []
-
-        for file_path in sorted(self.conversations_dir.glob("*.json"), reverse=True)[:limit]:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                conversations.append({
-                    "id": data["id"],
-                    "created_at": data["created_at"],
-                    "updated_at": data["updated_at"],
-                    "message_count": len(data["messages"])
-                })
-
-        return conversations
-
 
 # ============= Claude 服务 =============
 class ClaudeService:
@@ -187,465 +147,98 @@ class ClaudeService:
         return response.content[0].text
 
 
-# ============= HTML 模板 =============
-HTML_TEMPLATE = '''<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ app_title }}</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
-        }
-
-        .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
-        }
-
-        .header h1 {
-            font-size: 28px;
-            margin-bottom: 8px;
-        }
-
-        .header p {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .chat-container {
-            height: 500px;
-            overflow-y: auto;
-            padding: 20px;
-            background: #f8f9fa;
-        }
-
-        .message {
-            margin-bottom: 20px;
-            display: flex;
-            animation: fadeIn 0.3s ease-in;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .message.user {
-            justify-content: flex-end;
-        }
-
-        .message.assistant {
-            justify-content: flex-start;
-        }
-
-        .message-content {
-            max-width: 70%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            line-height: 1.6;
-        }
-
-        .message.user .message-content {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .message.assistant .message-content {
-            background: white;
-            color: #333;
-            border: 1px solid #e0e0e0;
-        }
-
-        .input-container {
-            padding: 20px;
-            background: white;
-            border-top: 1px solid #e0e0e0;
-        }
-
-        .input-wrapper {
-            display: flex;
-            gap: 10px;
-        }
-
-        #userInput {
-            flex: 1;
-            padding: 12px 16px;
-            border: 2px solid #e0e0e0;
-            border-radius: 24px;
-            font-size: 15px;
-            outline: none;
-            transition: border-color 0.3s;
-        }
-
-        #userInput:focus {
-            border-color: #667eea;
-        }
-
-        #sendBtn {
-            padding: 12px 28px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 24px;
-            font-size: 15px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        #sendBtn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        #sendBtn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        .typing-indicator {
-            display: none;
-            padding: 12px 16px;
-            background: white;
-            border-radius: 12px;
-            border: 1px solid #e0e0e0;
-            width: fit-content;
-        }
-
-        .typing-indicator span {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #667eea;
-            margin: 0 2px;
-            animation: typing 1.4s infinite;
-        }
-
-        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-
-        @keyframes typing {
-            0%, 60%, 100% { transform: translateY(0); }
-            30% { transform: translateY(-10px); }
-        }
-
-        .welcome-message {
-            text-align: center;
-            color: #666;
-            padding: 40px 20px;
-        }
-
-        .welcome-message h2 {
-            font-size: 20px;
-            margin-bottom: 12px;
-            color: #333;
-        }
-
-        .suggestions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            justify-content: center;
-            margin-top: 20px;
-        }
-
-        .suggestion-btn {
-            padding: 8px 16px;
-            background: white;
-            border: 2px solid #667eea;
-            color: #667eea;
-            border-radius: 20px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.3s;
-        }
-
-        .suggestion-btn:hover {
-            background: #667eea;
-            color: white;
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                border-radius: 0;
-            }
-
-            .message-content {
-                max-width: 85%;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🇸🇬 新加坡文化交流系统</h1>
-            <p>探索新加坡多元文化，体验对话交流乐趣</p>
-        </div>
-
-        <div class="chat-container" id="chatContainer">
-            <div class="welcome-message" id="welcomeMessage">
-                <h2>欢迎来到新加坡文化交流系统！</h2>
-                <p>我可以帮您了解新加坡的历史文化、风土人情、饮食习俗等<br>请随时向我提问，让我们一起探索新加坡的多元文化魅力</p>
-                <div class="suggestions">
-                    <button class="suggestion-btn" onclick="askQuestion('新加坡有哪些传统节日？')">新加坡有哪些传统节日？</button>
-                    <button class="suggestion-btn" onclick="askQuestion('介绍一下新加坡的饮食文化')">介绍新加坡饮食文化</button>
-                    <button class="suggestion-btn" onclick="askQuestion('新加坡有什么社交礼仪需要注意？')">新加坡社交礼仪</button>
-                    <button class="suggestion-btn" onclick="askQuestion('新加坡的语言有什么特点？')">新加坡语言特点</button>
-                </div>
-            </div>
-        </div>
-
-        <div class="input-container">
-            <div class="input-wrapper">
-                <input type="text" id="userInput" placeholder="输入您的问题..." onkeypress="handleKeyPress(event)">
-                <button id="sendBtn" onclick="sendMessage()">发送</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let conversationId = null;
-        const chatContainer = document.getElementById('chatContainer');
-        const userInput = document.getElementById('userInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const welcomeMessage = document.getElementById('welcomeMessage');
-
-        function addMessage(content, isUser) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.innerHTML = content.replace(/\\n/g, '<br>');
-
-            messageDiv.appendChild(contentDiv);
-            chatContainer.appendChild(messageDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        function showTyping() {
-            const typingDiv = document.createElement('div');
-            typingDiv.className = 'message assistant';
-            typingDiv.id = 'typingIndicator';
-
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'typing-indicator';
-            contentDiv.style.display = 'block';
-            contentDiv.innerHTML = '<span></span><span></span><span></span>';
-
-            typingDiv.appendChild(contentDiv);
-            chatContainer.appendChild(typingDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        function hideTyping() {
-            const typing = document.getElementById('typingIndicator');
-            if (typing) typing.remove();
-        }
-
-        async function sendMessage() {
-            const message = userInput.value.trim();
-            if (!message) return;
-
-            if (welcomeMessage) {
-                welcomeMessage.style.display = 'none';
-            }
-
-            addMessage(message, true);
-            userInput.value = '';
-            sendBtn.disabled = true;
-
-            showTyping();
-
-            try {
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        message: message,
-                        conversation_id: conversationId
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('请求失败');
-                }
-
-                const data = await response.json();
-                conversationId = data.conversation_id;
-
-                hideTyping();
-                addMessage(data.response, false);
-
-            } catch (error) {
-                hideTyping();
-                addMessage('抱歉，发生了错误，请稍后再试。', false);
-                console.error('Error:', error);
-            } finally {
-                sendBtn.disabled = false;
-                userInput.focus();
-            }
-        }
-
-        function askQuestion(question) {
-            userInput.value = question;
-            sendMessage();
-        }
-
-        function handleKeyPress(event) {
-            if (event.key === 'Enter') {
-                sendMessage();
-            }
-        }
-
-        userInput.focus();
-    </script>
-</body>
-</html>'''
-
-
-# ============= Pydantic 模型 =============
-class ChatRequest(BaseModel):
-    message: str
-    conversation_id: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    response: str
-    conversation_id: str
-
-
-class ConversationListResponse(BaseModel):
-    conversations: List[Dict]
-
-
-# ============= FastAPI 应用 =============
-def create_app():
-    """创建FastAPI应用"""
-    settings = load_settings()
-    app = FastAPI(title=settings.app_title, version=settings.app_version)
+# ============= Streamlit 应用 =============
+def main():
+    # 页面配置
+    st.set_page_config(
+        page_title="新加坡文化交流系统",
+        page_icon="🇸🇬",
+        layout="centered"
+    )
 
     # 初始化服务
-    claude_service = ClaudeService(
-        api_key=settings.anthropic_api_key,
-        model=settings.claude_model,
-        max_tokens=settings.claude_max_tokens,
-        temperature=settings.claude_temperature
-    )
-    storage_service = StorageService(conversations_dir=settings.conversations_dir)
+    settings = Settings()
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index():
-        """主页"""
-        return HTMLResponse(content=HTML_TEMPLATE.replace("{{ app_title }}", settings.app_title))
+    # 检查 API Key
+    if not settings.anthropic_api_key:
+        st.error("⚠️ 未配置 ANTHROPIC_API_KEY")
+        st.info("请在 .env 文件中设置: ANTHROPIC_API_KEY=your_key_here")
+        st.info("获取 API Key: https://console.anthropic.com/")
+        return
 
-    @app.post("/api/chat", response_model=ChatResponse)
-    async def chat(request: ChatRequest):
-        """与AI进行对话"""
-        try:
-            if not request.conversation_id:
-                conversation_id = storage_service.create_conversation()
-            else:
-                conversation_id = request.conversation_id
-                if not storage_service.get_conversation(conversation_id):
-                    raise HTTPException(status_code=404, detail="对话不存在")
+    # 初始化 session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-            storage_service.add_message(conversation_id, "user", request.message)
+    if "conversation_id" not in st.session_state:
+        storage = StorageService(settings.conversations_dir)
+        st.session_state.conversation_id = storage.create_conversation()
 
-            conversation_data = storage_service.get_conversation(conversation_id)
-            conversation_history = conversation_data["messages"][:-1]
+    # 显示标题
+    st.title("🇸🇬 新加坡文化交流系统")
+    st.markdown("探索新加坡多元文化，体验对话交流乐趣")
 
-            ai_response = claude_service.chat(request.message, conversation_history)
+    # 显示聊天历史
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-            storage_service.add_message(conversation_id, "assistant", ai_response)
+    # 欢迎消息
+    if not st.session_state.messages:
+        st.markdown("""
+        ### 欢迎来到新加坡文化交流系统！
 
-            return ChatResponse(response=ai_response, conversation_id=conversation_id)
+        我可以帮您了解新加坡的历史文化、风土人情、饮食习俗等
+        请随时向我提问，让我们一起探索新加坡的多元文化魅力
+        """)
 
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        # 快捷问题按钮
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🎉 新加坡传统节日", use_container_width=True):
+                st.session_state.input = "新加坡有哪些传统节日？"
+        with col2:
+            if st.button("🍜 新加坡饮食文化", use_container_width=True):
+                st.session_state.input = "介绍一下新加坡的饮食文化"
 
-    @app.get("/api/conversations/{conversation_id}")
-    async def get_conversation(conversation_id: str):
-        """获取对话历史"""
-        conversation = storage_service.get_conversation(conversation_id)
-        if not conversation:
-            raise HTTPException(status_code=404, detail="对话不存在")
-        return JSONResponse(content=conversation)
+        col3, col4 = st.columns(2)
+        with col3:
+            if st.button("🤝 新加坡社交礼仪", use_container_width=True):
+                st.session_state.input = "新加坡有什么社交礼仪需要注意？"
+        with col4:
+            if st.button("🗣️ 新加坡语言特点", use_container_width=True):
+                st.session_state.input = "新加坡的语言有什么特点？"
 
-    @app.get("/api/conversations", response_model=ConversationListResponse)
-    async def list_conversations(limit: int = 50):
-        """列出所有对话"""
-        conversations = storage_service.list_conversations(limit=limit)
-        return ConversationListResponse(conversations=conversations)
+    # 用户输入
+    if prompt := st.chat_input("输入您的问题..."):
+        # 显示用户消息
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    @app.post("/api/conversations/new")
-    async def create_conversation():
-        """创建新对话"""
-        conversation_id = storage_service.create_conversation()
-        return {"conversation_id": conversation_id}
+        # 保存到文件
+        storage = StorageService(settings.conversations_dir)
+        storage.add_message(st.session_state.conversation_id, "user", prompt)
 
-    @app.get("/health")
-    async def health_check():
-        return {"status": "healthy", "service": settings.app_title}
+        # 获取 AI 回复
+        with st.chat_message("assistant"):
+            with st.spinner("思考中..."):
+                claude_service = ClaudeService(
+                    api_key=settings.anthropic_api_key,
+                    model=settings.claude_model,
+                    max_tokens=settings.claude_max_tokens,
+                    temperature=settings.claude_temperature
+                )
 
-    return app
+                conversation_data = storage.get_conversation(st.session_state.conversation_id)
+                conversation_history = conversation_data["messages"][:-1]
+
+                response = claude_service.chat(prompt, conversation_history)
+
+        # 显示并保存 AI 回复
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        storage.add_message(st.session_state.conversation_id, "assistant", response)
 
 
-# ============= 主程序入口 =============
 if __name__ == "__main__":
-    import uvicorn
-
-    print("🇸🇬 新加坡文化交流系统启动中...")
-    print("=" * 50)
-
-    # 检查环境变量
-    load_dotenv()
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        print("⚠️  警告: 未找到 ANTHROPIC_API_KEY")
-        print("请创建 .env 文件并添加以下内容:")
-        print("   ANTHROPIC_API_KEY=your_actual_api_key_here")
-        print()
-        print("获取 API Key: https://console.anthropic.com/")
-        print("=" * 50)
-    else:
-        print("✅ API Key 已配置")
-
-    print()
-    print("🚀 启动服务器...")
-    print("📍 本地访问: http://localhost:8000")
-    print("📍 局域网访问: http://0.0.0.0:8000")
-    print()
-    print("按 Ctrl+C 停止服务")
-    print("=" * 50)
-    print()
-
-    app = create_app()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    main()
